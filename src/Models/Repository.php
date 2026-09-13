@@ -19,8 +19,10 @@ use Illuminate\Database\Eloquent\Model;
 class Repository extends Model
 {
     protected $fillable = [
-        'name', 'full_name', 'html_url', 'description', 'readme'
+        'name', 'full_name', 'html_url', 'description', 'readme', 'is_private'
     ];
+
+    protected $casts = ['is_private' => 'boolean'];
 
     /**
      * Get the route key for the model.

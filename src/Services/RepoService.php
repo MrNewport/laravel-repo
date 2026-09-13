@@ -1,96 +1,102 @@
 <?php
+
 namespace MrNewport\LaravelRepo\Services;
 
 use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\ClientException;
 use Illuminate\Support\Facades\Cache;
 use MrNewport\LaravelRepo\Models\Repository;
 
 class RepoService
 {
-    protected Client $client;
+    protected ClientInterface $client;
     protected string $username;
     protected string $token;
     protected string $visibility;
 
-    public function __construct()
+    public function __construct(?ClientInterface $client = null)
     {
-        $this->client = new Client();
-        $this->username = config('repo.github_username');
-        $this->token = config('repo.github_token');
-        $this->visibility = config('repo.minimum_visibility');
+        $this->client = $client ?? new Client(['timeout' => 30, 'connect_timeout' => 10]);
+        $this->username = (string) config('repo.github_username', '');
+        $this->token = (string) config('repo.github_token', '');
+        $this->visibility = (string) config('repo.minimum_visibility', 'public');
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9-]*$/D', $this->username)) {
+            throw new \InvalidArgumentException('Configure a valid GitHub username.');
+        }
+        if (!in_array($this->visibility, ['public', 'private'], true)) {
+            throw new \InvalidArgumentException('Visibility must be public or private.');
+        }
+        if ($this->visibility === 'private' && $this->token === '') {
+            throw new \InvalidArgumentException('Private repository access requires a token.');
+        }
     }
 
     public function fetchRepositories(): array
     {
-        if (Cache::has('github_repos')) {
-            return Cache::get('github_repos');
-        }
+        $key = 'github_repos:'.hash('sha256', json_encode([$this->username, $this->visibility, $this->token]));
 
-        // If it's 'private', we want to fetch 'all' repos (private + public)
-        // If it's 'public', we only want 'public'
-        $visibility = $this->visibility === 'private' ? 'all' : 'public';
-
-        // When fetching private repos, you must use the /user/repos endpoint (not /users/{username}/repos).
-        // This also requires you to provide a valid auth token.
-        $url = $this->token
-            ? "https://api.github.com/user/repos?visibility={$visibility}"
-            : "https://api.github.com/users/{$this->username}/repos?visibility={$visibility}";
-
-        $options = [
-            'headers' => array_filter([
-                // If you have a personal access token, set it here
-                'Authorization' => $this->token ? 'token ' . $this->token : null,
-                'Accept'        => 'application/vnd.github.v3+json'
-            ])
-        ];
-
-        $response = $this->client->get($url, $options);
-        $repos = json_decode($response->getBody()->getContents(), true);
-
-        foreach ($repos as $key => &$repo) {
-            try {
-                $readme = $this->fetchReadme($repo['full_name']);
-            } catch (\Exception $e) {
-                // If we fail to fetch the README, remove this repo from the list
-                unset($repos[$key]);
-                continue;
+        return Cache::remember($key, (int) config('repo.cache_duration', 3600), function () {
+            $repos = [];
+            $private = $this->visibility === 'private';
+            $endpoint = $private ? '/user/repos' : '/users/'.$this->username.'/repos';
+            for ($page = 1; ; $page++) {
+                $query = ['per_page' => 100, 'page' => $page];
+                if ($private) {
+                    $query += ['visibility' => 'all', 'affiliation' => 'owner'];
+                } else {
+                    $query += ['type' => 'owner'];
+                }
+                $response = $this->client->request('GET', 'https://api.github.com'.$endpoint, [
+                    'headers' => $this->headers(), 'query' => $query, 'allow_redirects' => false,
+                ]);
+                $batch = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+                if (!is_array($batch) || !array_is_list($batch)) {
+                    throw new \UnexpectedValueException('GitHub returned an invalid repository list.');
+                }
+                foreach ($batch as $repo) {
+                    if (strcasecmp($repo['owner']['login'] ?? '', $this->username) !== 0 || (!$private && ($repo['private'] ?? false))) {
+                        continue;
+                    }
+                    $repo['readme'] = $this->fetchReadme($repo['full_name']);
+                    Repository::updateOrCreate(['full_name' => $repo['full_name']], [
+                        'name' => $repo['name'], 'html_url' => $repo['html_url'],
+                        'description' => $repo['description'] ?? null, 'readme' => $repo['readme'],
+                        'is_private' => (bool) ($repo['private'] ?? false),
+                    ]);
+                    $repos[] = $repo;
+                }
+                if (count($batch) < 100) {
+                    return $repos;
+                }
             }
-
-            $repo['readme'] = $readme;
-
-            // Save or update repository in your DB
-            Repository::updateOrCreate(
-                ['full_name' => $repo['full_name']],
-                [
-                    'name'        => $repo['name'],
-                    'html_url'    => $repo['html_url'],
-                    'description' => $repo['description'],
-                    'readme'      => $readme
-                ]
-            );
-        }
-
-        // Re-index array (in case of unsets)
-        $repos = array_values($repos);
-
-        // Cache the results
-        Cache::put('github_repos', $repos, config('repo.cache_duration'));
-
-        return $repos;
+        });
     }
 
     public function fetchReadme(string $repoFullName): string
     {
-        $url = "https://api.github.com/repos/{$repoFullName}/readme";
-        $options = [
-            'headers' => array_filter([
-                'Authorization' => $this->token ? 'token ' . $this->token : null,
-                'Accept' => 'application/vnd.github.v3.raw'
-            ])
-        ];
+        if (!preg_match('~^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$~D', $repoFullName)) {
+            throw new \InvalidArgumentException('Expected an owner/repository name.');
+        }
+        try {
+            $response = $this->client->request('GET', 'https://api.github.com/repos/'.$repoFullName.'/readme', [
+                'headers' => $this->headers('application/vnd.github.raw+json'), 'allow_redirects' => false,
+            ]);
+            return (string) $response->getBody();
+        } catch (ClientException $exception) {
+            if ($exception->getResponse()->getStatusCode() === 404) {
+                return '';
+            }
+            throw $exception;
+        }
+    }
 
-        $response = $this->client->get($url, $options);
-
-        return $response->getBody()->getContents();
+    private function headers(string $accept = 'application/vnd.github+json'): array
+    {
+        return array_filter([
+            'Authorization' => $this->token !== '' ? 'Bearer '.$this->token : null,
+            'Accept' => $accept, 'X-GitHub-Api-Version' => '2022-11-28',
+            'User-Agent' => 'MrNewport-LaravelRepo',
+        ]);
     }
 }

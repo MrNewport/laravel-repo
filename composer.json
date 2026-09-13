@@ -1,4 +1,3 @@
-
 {
     "name": "mrnewport/laravel-repo",
     "description": "A Laravel package that fetches your GitHub repositories and saves README files into db for use on web pages",
@@ -13,11 +12,11 @@
         }
     ],
     "require": {
-        "php": "^7.4|^8.0",
-        "guzzlehttp/guzzle": "^7.3",
-        "illuminate/support": "^8.0|^9.0|^10.0|^11.0",
-        "illuminate/database": "^8.0|^9.0|^10.0|^11.0",
-        "illuminate/cache": "^8.0|^9.0|^10.0|^11.0"
+        "php": "^8.2",
+        "guzzlehttp/guzzle": "^7.8.2",
+        "illuminate/support": "^12.0 || ^13.0",
+        "illuminate/database": "^12.0 || ^13.0",
+        "illuminate/cache": "^12.0 || ^13.0"
     },
     "autoload": {
         "psr-4": {
@@ -33,8 +32,24 @@
     },
     "config": {
         "optimize-autoloader": true,
-        "sort-packages": true
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
     },
-    "minimum-stability": "dev",
-    "prefer-stable": true
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "require-dev": {
+        "orchestra/testbench": "^10.0 || ^11.0",
+        "pestphp/pest": "^3.8",
+        "mockery/mockery": "^1.6"
+    },
+    "scripts": {
+        "test": "pest"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MrNewport\\LaravelRepo\\Tests\\": "tests/"
+        }
+    }
 }
