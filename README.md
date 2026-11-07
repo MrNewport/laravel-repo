@@ -1,5 +1,7 @@
 # Laravel Repo
 
+Read the [complete handbook](docs/HANDBOOK.md) for installation, contracts, configuration, failures and application recipes. The [feature inventory](docs/FEATURES.md) maps implemented behavior to its boundaries.
+
 Current release: **1.0.0**. Supported installations: Laravel 12 (PHP 8.2+) and Laravel 13 (PHP 8.3+). CI verifies supported PHP/Laravel combinations. Earlier Laravel versions should remain on the previous major release.
 
 First tagged release: Laravel 12/13, stable dependencies, isolated Testbench coverage. Repository sync paginates, keeps repositories without README files, propagates real API failures, scopes cache by owner/visibility/credential identity, uses owner-specific endpoints, and persists visibility. Existing rows are private until refreshed by the new sync.
@@ -45,7 +47,7 @@ The MrNewport Repo package allows you to set your GitHub username, fetch all of 
    GITHUB_USERNAME=your-github-username
    GITHUB_TOKEN=your-github-token
    REPO_CACHE_DURATION=3600
-   MINIMUM_VISIBILITY=private
+   REPO_MINIMUM_VISIBILITY=private
    ```
 
 4. Run the migration:
